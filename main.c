@@ -15,15 +15,9 @@
 
 struct Epoll_Data{
     int fd;
-    //utd:协程的id
     char *wb;
 };
 
-struct coroutine_data{
-  int fd;
-  int efd;
-  char iostate;
-};
 
 //函数:indexOf
 //功能:从头开始查找str2在str1中的位置
@@ -125,11 +119,32 @@ void processConnect(void * sch){
 
 }
 
-void readAll(void * sch){
+char *readAll(schedule_t * sch){
   ssize_t count;
-  char buf[512];
-  
-  count = read(events[i].data.fd, buf, sizeof(buf)); 
+  char totalbuf[1024];
+  int idx = 0;
+  (coroutine_data *)cdata =(coroutine_data *)uthread_getArg(sch)
+  while (1){
+      char buf[256];
+      count = read(cdata->fd, buf, sizeof(buf)); 
+      if (count == -1){
+          if (errno != EAGAIN){  
+              perror ("read but not eagain");  
+          }
+          cdata->iostate = 'r';
+          uthread_yield(sch);
+      }else{
+          if idx >= 1023{
+            perror("reaching the max buf size!")
+          }
+          strcpy(totalbuf+idx,buf)
+          idx += count-1;
+          if (indexOf(buf,"\r\n\r\n") >= 0){
+            return totalbuf;
+          }
+      }
+  }
+  return totalbuf;
 }
 
 
@@ -231,9 +246,15 @@ int main (int argc, char *argv[]){
                      list of fds to monitor. */  
                   s = make_socket_non_blocking (infd);  
                   if (s == -1)  
-                    abort ();  
-  
-                  event.data.fd = infd;  
+                    abort ();
+
+                  (coroutine_data *)cdata = calloc(1,sizeof (coroutine_data))
+                  cdata->fd = infd;
+                  cdata->efd = efd;
+                  cdata->iostate = 'n';
+                  int utd = uthread_create(s,func3,&fd1);
+
+                  event.data.fd = utd;
                   event.events = EPOLLIN | EPOLLET | EPOLLERR | EPOLLHUP;  
                   s = epoll_ctl (efd, EPOLL_CTL_ADD, infd, &event);  
                   if (s == -1){  
@@ -272,7 +293,7 @@ int main (int argc, char *argv[]){
   
                   /* Write the buffer to standard output */  
                   //printf("descriptor %d No %d : %s\n",events[i].data.fd,idx++,buf);
-                  /*if buf contains "\r\n\r\n" then close the connection */
+                  /*if buf contains "\r\n\r\n" then ready to write*/
                   if(indexOf(buf,"\r\n\r\n") >= 0){
                       char *wb;
                       char temp[MAXBUFSIZE];

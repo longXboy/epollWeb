@@ -4,8 +4,7 @@
 
 #include "uthread.h"
 
-void uthread_resume(schedule_t *schedule , int id)
-{
+void uthread_resume(schedule_t *schedule , int id){
     if(id < 0 || id >= Max_Thread_SIZE){
         return;
     }
@@ -25,7 +24,7 @@ void uthread_resume(schedule_t *schedule , int id)
             schedule->running_thread = id;
 
             makecontext(&(t->ctx),(void (*)(void))(uthread_body),1,schedule);
-            
+            swapcontext(&(schedule->main),&(t->ctx));
             /* !! note : Here does not need to break */
 
         case SUSPEND:
@@ -33,38 +32,45 @@ void uthread_resume(schedule_t *schedule , int id)
             swapcontext(&(schedule->main),&(t->ctx));
 
             break;
-        default: ;
+        default:  perror("resume thread failed,unsupported thread state!");
     }
 }
 
-void uthread_yield(schedule_t *schedule)
-{
+void uthread_yield(schedule_t *schedule){
     if(schedule->running_thread != -1 ){
         uthread_t *t = &(schedule->threads[schedule->running_thread]);
         t->state = SUSPEND;
         schedule->running_thread = -1;
 
         swapcontext(&(t->ctx),&(schedule->main));
+    }else{
+        perror("can't yield while no threads running!");
     }
 }
 
-void uthread_body(schedule_t *ps)
-{
-    int id = ps->running_thread;
+void *uthread_getArg(schedule_t *schedule){
+     if(schedule->running_thread != -1 ){
+        uthread_t *t = &(schedule->threads[schedule->running_thread]);
+        return t->arg;
+     }else{
+        perror("can't get argument while no threads running!");
+    }
+}
+
+void uthread_body(schedule_t *schedule){
+    int id = schedule->running_thread;
 
     if(id != -1){
-        uthread_t *t = &(ps->threads[id]);
+        uthread_t *t = &(schedule->threads[id]);
 
-        t->func(t->arg);
-
+        t->func(schedule);
+        free(uthread_getArg(schedule));
         t->state = FREE;
-        
-        ps->running_thread = -1;
+        schedule->running_thread = -1;
     }
 }
 
-int uthread_create(schedule_t *schedule,Fun func,void *arg)
-{
+int uthread_create(schedule_t *schedule,Fun func,void *arg){
     int id = 0;
     
     for(id = 0; id < Max_Thread_SIZE; ++id ){
@@ -81,8 +87,7 @@ int uthread_create(schedule_t *schedule,Fun func,void *arg)
     return id;
 }
 
-int schedule_finished( schedule_t *schedule)
-{
+int schedule_finished( schedule_t *schedule){
     if (schedule->running_thread != -1){
         return 0;
     }else{

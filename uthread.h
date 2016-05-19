@@ -8,11 +8,11 @@
 
 #define DEFAULT_STACK_SIZE (1024*128)
 #define Max_Thread_SIZE 256
-enum ThreadState{FREE,RUNNABLE,RUNNING,SUSPEND};
+enum ThreadState{FREE,RUNNABLE,RUNNING,SUSPEND,READY};
 
 struct schedule_t;
 
-typedef void (*Fun)(void *arg);
+typedef void (*Fun)(void *sch);
 
 typedef struct uthread_t
 {
@@ -60,5 +60,7 @@ void uthread_resume(schedule_t *schedule,int id);
 *    return 1 if all threads run over,otherwise return 0
 */
 int  schedule_finished(schedule_t *schedule);
+
+void *uthread_getArg(schedule_t *schedule);
 
 #endif
