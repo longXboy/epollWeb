@@ -63,4 +63,5 @@ int  schedule_finished(schedule_t *schedule);
 
 void *uthread_getArg(schedule_t *schedule);
 
+int uthread_getId(schedule_t *schedule);
 #endif

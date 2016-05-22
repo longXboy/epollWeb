@@ -3,7 +3,7 @@
 #define MY_EPOLL_H
 
 struct coroutine_data;
-struct coroutine_data{
+typedef struct coroutine_data{
   int fd;
   int efd;
   char iostate;

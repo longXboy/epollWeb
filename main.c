@@ -9,14 +9,16 @@
 #include <sys/epoll.h>
 #include <string.h>
 #include "uthread.h"  
+#include "epoll.h"
 
 #define MAXEVENTS 64  
-#define MAXBUFSIZE 4096
+#define MAXBUFSIZE 2048
 
 struct Epoll_Data{
     int fd;
     char *wb;
 };
+int idx = 0;
 
 
 //函数:indexOf
@@ -77,7 +79,7 @@ static int create_and_bind (char *port){
   
   if (rp == NULL)  
     {  
-      fprintf (stderr, "Could not bind\n");  
+      fprintf (stderr, "Could not bind\n"); 
       return -1;  
     }  
   
@@ -114,16 +116,11 @@ static int make_socket_non_blocking (int sfd)
 }  
 
 
-void processConnect(void * sch){
-  (schedule_t *)s = (schedule_t *)sch;
-
-}
-
-char *readAll(schedule_t * sch){
+void readAll(schedule_t * sch,char * totalbuf){
   ssize_t count;
-  char totalbuf[1024];
   int idx = 0;
-  (coroutine_data *)cdata =(coroutine_data *)uthread_getArg(sch)
+  coroutine_data *cdata;
+  cdata =(coroutine_data *)uthread_getArg(sch);
   while (1){
       char buf[256];
       count = read(cdata->fd, buf, sizeof(buf)); 
@@ -134,25 +131,68 @@ char *readAll(schedule_t * sch){
           cdata->iostate = 'r';
           uthread_yield(sch);
       }else{
-          if idx >= 1023{
-            perror("reaching the max buf size!")
+          if (idx >= 1023){
+            perror("reaching the max buf size!");
           }
-          strcpy(totalbuf+idx,buf)
-          idx += count-1;
           if (indexOf(buf,"\r\n\r\n") >= 0){
-            return totalbuf;
+            return;
           }
+          printf("get:%s\n",buf);
+          strcpy(totalbuf+idx,buf);
+          idx += count-1;
+          
       }
   }
-  return totalbuf;
+  return;
 }
+
+void writeandflush(schedule_t * sch,char * temp){
+  struct epoll_event event; 
+  int s;
+  coroutine_data *cdata =(coroutine_data *)uthread_getArg(sch);
+  int id = uthread_getId(sch);
+  if (id < 0){
+    perror("uthread_getId() return -1");
+  }
+
+  event.data.fd = id;
+  event.events = EPOLLOUT | EPOLLET | EPOLLERR | EPOLLHUP;
+  s = epoll_ctl (cdata->efd, EPOLL_CTL_MOD,cdata->fd, &event);
+  if(s == -1){  
+    perror("ready to write failed!,epoll_ctl");
+    abort();  
+  }
+  uthread_yield(sch);
+  write(cdata->fd, temp, MAXBUFSIZE);
+  s = epoll_ctl (cdata->efd, EPOLL_CTL_DEL,cdata->fd, &event);
+  if(s == -1){  
+    perror("ready to close,epoll_ctl");  
+    abort (); 
+  }
+  close(cdata->fd);
+}
+
+void processConnect(void * sch){
+  schedule_t *s = (schedule_t *)sch;
+  char totalbuf[1024];
+  readAll(s,totalbuf);
+  printf("read end!\n");
+  char *wb;
+  char temp[MAXBUFSIZE];
+  char temphello[MAXBUFSIZE];
+  sprintf(temphello,"hello %d Guest",idx++);
+  sprintf(temp, "HTTP/1.0 200 OK\r\nContent-length:%lu\r\nContent-type:text/html\r\n\r\n%s", strlen(temphello),temphello);
+  writeandflush(s,temp);
+
+  return;
+}
+
 
 
 //端口由参数argv[1]指定  
 int main (int argc, char *argv[]){  
   int sfd, s;  
   int efd;  
-  int idx = 0;
   struct epoll_event event;  
   struct epoll_event *events;  
   schedule_t *sch = (schedule_t *)calloc(1,sizeof (schedule_t));
@@ -244,15 +284,15 @@ int main (int argc, char *argv[]){
   
                   /* Make the incoming socket non-blocking and add it to the 
                      list of fds to monitor. */  
-                  s = make_socket_non_blocking (infd);  
+                  s = make_socket_non_blocking (infd);
                   if (s == -1)  
                     abort ();
 
-                  (coroutine_data *)cdata = calloc(1,sizeof (coroutine_data))
+                  coroutine_data *cdata = calloc(1,sizeof (coroutine_data));
                   cdata->fd = infd;
                   cdata->efd = efd;
                   cdata->iostate = 'n';
-                  int utd = uthread_create(s,func3,&fd1);
+                  int utd = uthread_create(sch,processConnect,cdata);
 
                   event.data.fd = utd;
                   event.events = EPOLLIN | EPOLLET | EPOLLERR | EPOLLHUP;  
@@ -265,35 +305,24 @@ int main (int argc, char *argv[]){
               }  
               continue;  
           }else if (events[i].events & EPOLLIN){
-              /* We have data on the fd waiting to be read. Read and 
-                 display it. We must read whatever data is available 
-                 completely, as we are running in edge-triggered mode 
-                 and won't get a notification again for the same 
-                 data. */  
-              int done = 0;  
+               uthread_resume(sch,events[i].data.fd);
+              /*int done = 0;  
               while (1){
                   ssize_t count;
                   char buf[512];
   
                   count = read(events[i].data.fd, buf, sizeof(buf));  
                   if (count == -1){  
-                      /* If errno == EAGAIN, that means we have read all 
-                         data. So go back to the main loop. */  
                       if (errno != EAGAIN){  
                           perror ("read");  
                           done = 1;  
                       }  
                       break;  
-                  }else if (count == 0){  
-                      /* End of file. The remote has closed the 
-                         connection. */  
+                  }else if (count == 0){   
                       done = 1;
                       break;  
                   }
   
-                  /* Write the buffer to standard output */  
-                  //printf("descriptor %d No %d : %s\n",events[i].data.fd,idx++,buf);
-                  /*if buf contains "\r\n\r\n" then ready to write*/
                   if(indexOf(buf,"\r\n\r\n") >= 0){
                       char *wb;
                       char temp[MAXBUFSIZE];
@@ -315,22 +344,15 @@ int main (int argc, char *argv[]){
                       }
                       break;
                   }
-                  /*s = write (1, buf, count);  
-                  if (s == -1){  
-                      perror ("write");  
-                      abort ();  
-                  }  */
               }
               if(done){  
                   printf ("Closed connection on descriptor %d\n",  
                           events[i].data.fd);  
-  
-                  /* Closing the descriptor will make epoll remove it 
-                     from the set of descriptors which are monitored. */  
                   close (events[i].data.fd);  
-              }  
+              } */
           }else if (events[i].events & EPOLLOUT){
-              struct Epoll_Data *ed =  (struct Epoll_Data *)events[i].data.ptr;
+              uthread_resume(sch,events[i].data.fd);
+              /*struct Epoll_Data *ed =  (struct Epoll_Data *)events[i].data.ptr;
               write(ed->fd, ed->wb, MAXBUFSIZE);
               //printf("ready to remove fd !wb:%s fd:%d \n",ed->wb,ed->fd);
               s = epoll_ctl (efd, EPOLL_CTL_DEL,ed->fd, &event);
@@ -342,7 +364,7 @@ int main (int argc, char *argv[]){
               printf("after ptr wb: %p\n",ed->wb);
               printf("after ptr ed: %p\n",ed);
               free(ed->wb);
-              free(ed);
+              free(ed);*/
           }else {
               printf("unsupported epoll type(%d)!",events[i].events);
               close (events[i].data.fd);  

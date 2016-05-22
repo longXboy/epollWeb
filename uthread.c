@@ -57,6 +57,16 @@ void *uthread_getArg(schedule_t *schedule){
     }
 }
 
+int uthread_getId(schedule_t *schedule){
+     if(schedule->running_thread != -1 ){
+        return schedule->running_thread;
+     }else{
+        perror("can't get argument while no threads running!");
+    }
+    return -1;
+}
+
+
 void uthread_body(schedule_t *schedule){
     int id = schedule->running_thread;
 
